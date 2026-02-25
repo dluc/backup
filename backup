@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+#
+# backup - Create a timestamped backup copy of a file
+#
+# Usage: backup <filename>
+#
+# Creates <filename>.bck.YYYY-MM-DD-HH-MM-SS in the same directory.
+#
+# Compatible with: bash 3+, zsh, WSL, macOS, Linux
+
+# Strict mode (pipefail available since bash 3.0 / 2004)
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Colors — disabled when output is not a terminal or NO_COLOR is set
+# ---------------------------------------------------------------------------
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    RED=$'\033[0;31m'
+    GREEN=$'\033[0;32m'
+    YELLOW=$'\033[0;33m'
+    CYAN=$'\033[0;36m'
+    BOLD=$'\033[1m'
+    DIM=$'\033[2m'
+    RESET=$'\033[0m'
+else
+    RED=''
+    GREEN=''
+    YELLOW=''
+    CYAN=''
+    BOLD=''
+    DIM=''
+    RESET=''
+fi
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+info()  { printf "${CYAN}[INFO]${RESET} %s\n" "$1"; }
+ok()    { printf "${GREEN}[ OK ]${RESET} %s\n" "$1"; }
+error() { printf "${RED}[ERR ]${RESET} %s\n" "$1" >&2; }
+
+die() {
+    error "$1"
+    if [ -n "${2:-}" ]; then
+        printf "       ${YELLOW}Fix:${RESET} %s\n" "$2" >&2
+    fi
+    exit 1
+}
+
+# ---------------------------------------------------------------------------
+# Usage
+# ---------------------------------------------------------------------------
+if [ $# -eq 0 ]; then
+    printf "${BOLD}Usage:${RESET} %s <filename>\n\n" "$(basename "$0")"
+    printf "Creates a timestamped backup copy of a file.\n"
+    printf "Backup name: ${DIM}<filename>.bck.YYYY-MM-DD-HH-MM-SS${RESET}\n"
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Validate arguments
+# ---------------------------------------------------------------------------
+if [ $# -gt 1 ]; then
+    die "Too many arguments (expected 1, got $#)." \
+        "Provide exactly one filename: $(basename "$0") <filename>"
+fi
+
+SOURCE="$1"
+
+if [ -z "$SOURCE" ]; then
+    die "Filename is empty." \
+        "Provide a non-empty filename."
+fi
+
+# Reject symbolic links first (before -e, which follows links)
+if [ -L "$SOURCE" ]; then
+    die "'$SOURCE' is a symbolic link, not a regular file." \
+        "Provide the actual file path. Resolve with: readlink -f \"$SOURCE\""
+fi
+
+# Check existence (now safe — we know it is not a symlink)
+if [ ! -e "$SOURCE" ]; then
+    die "File not found: $SOURCE" \
+        "Check the path and spelling. List files with: ls -la \"$(dirname -- "$SOURCE")\""
+fi
+
+# Reject directories
+if [ -d "$SOURCE" ]; then
+    die "'$SOURCE' is a directory, not a file." \
+        "Provide a regular file. To back up a directory, use: tar or cp -r"
+fi
+
+# Reject non-regular files (devices, sockets, pipes, etc.)
+if [ ! -f "$SOURCE" ]; then
+    die "'$SOURCE' is not a regular file (it may be a device, socket, or named pipe)." \
+        "Provide a regular file."
+fi
+
+# Check read permission
+if [ ! -r "$SOURCE" ]; then
+    OWNER="$(ls -l -- "$SOURCE" 2>/dev/null | awk '{print $3}' || echo "unknown")"
+    die "Cannot read '$SOURCE': permission denied." \
+        "File is owned by '$OWNER'. Fix with: chmod +r \"$SOURCE\" or run as the owner."
+fi
+
+# ---------------------------------------------------------------------------
+# Build backup path
+# ---------------------------------------------------------------------------
+TIMESTAMP="$(date '+%Y-%m-%d-%H-%M-%S')"
+
+# Resolve the directory to an absolute path
+SOURCE_DIR="$(cd "$(dirname -- "$SOURCE")" && pwd)"
+SOURCE_BASE="$(basename -- "$SOURCE")"
+
+BACKUP_NAME="${SOURCE_BASE}.bck.${TIMESTAMP}"
+BACKUP_PATH="${SOURCE_DIR}/${BACKUP_NAME}"
+
+# Check the target directory is writable
+if [ ! -w "$SOURCE_DIR" ]; then
+    die "Cannot write to directory '$SOURCE_DIR': permission denied." \
+        "Check permissions with: ls -ld \"$SOURCE_DIR\""
+fi
+
+# Guard against (unlikely) name collision
+if [ -e "$BACKUP_PATH" ]; then
+    die "Backup already exists: $BACKUP_PATH" \
+        "Wait a moment and try again, or remove the existing backup."
+fi
+
+# ---------------------------------------------------------------------------
+# Create backup
+# ---------------------------------------------------------------------------
+SOURCE_SIZE="$(wc -c < "$SOURCE" 2>/dev/null | tr -d ' ' || echo "?")"
+
+info "Source: ${BOLD}${SOURCE}${RESET} ${DIM}(${SOURCE_SIZE} bytes)${RESET}"
+info "Backup: ${BOLD}${BACKUP_PATH}${RESET}"
+
+if cp -- "$SOURCE" "$BACKUP_PATH"; then
+    ok "Backup created successfully: ${BOLD}${BACKUP_NAME}${RESET}"
+else
+    # cp failed — clean up partial file if it exists
+    rm -f -- "$BACKUP_PATH" 2>/dev/null || true
+    die "Failed to create backup." \
+        "Check available disk space with: df -h \"$SOURCE_DIR\""
+fi
