@@ -53,6 +53,24 @@ The script validates the input and reports actionable errors for:
 - Disk full / copy failures
 - Backup name collisions
 
+## Why this exists
+
+Linux has built-in options for file backups, but none target the simple case of
+"give me a timestamped copy of this one file, right here, right now":
+
+| Tool | What it does | Difference |
+|------|-------------|------------|
+| `cp --backup=numbered` | Creates `file.~1~`, `file.~2~`, etc. | Sequential numbers, not timestamps -- you can't tell *when* a backup was made |
+| `rsync` | Directory sync and mirroring | Designed for syncing trees, not single-file snapshots |
+| `rdiff-backup` | Incremental directory backups | Stores reverse diffs, requires a destination directory |
+| `borgbackup` | Deduplicating encrypted archives | Full backup system, heavy for a quick file copy |
+| `timeshift` | System-level snapshots (btrfs/rsync) | Whole-system scope, not individual files |
+
+The common workaround is a shell alias like `cp file file.$(date +%F)`, which
+works until you hit a filename with spaces, forget the format string, or want
+consistent error handling. This script wraps that pattern with proper validation,
+safe filename handling, and clear error messages.
+
 ## License
 
 MIT
